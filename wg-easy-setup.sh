@@ -143,6 +143,10 @@ M=(
 [ipv6_off]="IPv6 aus"
 [compose_fail]="Docker konnte die Images nicht laden oder den Container nicht starten."
 [docker_dl]="Docker-Installationsskript konnte nicht geladen werden."
+[p_wg]="WireGuard-Tunnel (VPN)"
+[p_http]="HTTP - Zertifikat und Weiterleitung auf HTTPS"
+[p_https]="HTTPS - Weboberflaeche"
+[p_ui]="Weboberflaeche"
 )
 }
 
@@ -269,6 +273,10 @@ M=(
 [ipv6_off]="IPv6 off"
 [compose_fail]="Docker could not pull the images or start the container."
 [docker_dl]="Could not download the Docker installation script."
+[p_wg]="WireGuard tunnel (VPN)"
+[p_http]="HTTP - certificate and redirect to HTTPS"
+[p_https]="HTTPS - web interface"
+[p_ui]="Web interface"
 )
 }
 
@@ -355,6 +363,19 @@ valid_dns() {
 ipv6_available() {
   [[ -e /proc/sys/net/ipv6/conf/all/disable_ipv6 ]] || return 1
   [[ "$(cat /proc/sys/net/ipv6/conf/all/disable_ipv6 2>/dev/null)" == "0" ]]
+}
+
+# Von aussen freizugebende Ports mit Zweck (abhaengig vom UI-Modus).
+# Modus 1: HTTPS ueber Domain (Caddy)  Modus 2: HTTP auf Server-IP  Modus 3: nur lokal.
+# Der WireGuard-Port ist immer noetig, sonst kommen keine Clients rein.
+print_ports() {                   # print_ports <ui_mode> <wg_port> <ui_port>
+  local mode="$1" wgp="$2" uip="$3"
+  printf "    %-10s %s\n" "UDP ${wgp}" "${M[p_wg]}"
+  case "$mode" in
+    1) printf "    %-10s %s\n" "TCP 80"  "${M[p_http]}"
+       printf "    %-10s %s\n" "TCP 443" "${M[p_https]}" ;;
+    2) printf "    %-10s %s\n" "TCP ${uip}" "${M[p_ui]}" ;;
+  esac
 }
 
 # ============================================================= Sprachauswahl
@@ -583,12 +604,8 @@ wizard() {
   printf "  %s: %s\n" "${M[l_dns]}" "$dns"
   printf "  %s: %s + %s\n" "${M[l_net]}" "$v4cidr" "${v6cidr:-${M[ipv6_off]}}"
   echo
-  local ports="UDP ${wg_port}"
-  case "$ui_mode" in
-    1) ports="${ports}, TCP 80, TCP 443" ;;
-    2) ports="${ports}, TCP ${ui_port}" ;;
-  esac
-  echo "  ${M[open_ports]} ${ports}"
+  echo "  ${M[open_ports]}"
+  print_ports "$ui_mode" "$wg_port" "$ui_port"
   echo; line
   ask_yes "${M[q_apply]}" yes || { info "${M[aborted]}"; exit 0; }
 
@@ -772,6 +789,9 @@ COMPOSE
   printf "  %s: %s\n" "${M[l_pw]}"     "$admin_pw"
   printf "  %s: %s:%s/udp\n" "${M[l_client]}" "$host" "$wg_port"
   printf "  %s: %s\n" "${M[l_files]}"  "$DIR"
+  echo
+  echo "  ${M[open_ports]}"
+  print_ports "$ui_mode" "$wg_port" "$ui_port"
   echo
   if [[ -n "$domain" ]]; then
     printf "  ${M[caddy1]}\n" "$domain"
