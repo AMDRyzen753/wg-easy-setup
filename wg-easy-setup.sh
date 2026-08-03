@@ -7,6 +7,7 @@
 #
 #   ./wg-easy-setup.sh
 #
+# shellcheck disable=SC2059  # M[] entries are trusted printf format strings (i18n placeholders)
 set -euo pipefail
 export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 
@@ -50,8 +51,8 @@ M=(
 [q_site]="Standort-Nummer (1-99) - daraus wird das Tunnelnetz gebildet"
 [site_nets]="Ergibt: IPv4 %s und IPv6 %s"
 [q_customnet]="Netze lieber selbst festlegen?"
-[q_v4cidr]="Tunnelnetz IPv4 (CIDR)"
-[q_v6cidr]="Tunnelnetz IPv6 (CIDR)"
+[q_v4cidr]="IPv4-Tunnelnetz (CIDR)"
+[q_v6cidr]="IPv6-Tunnelnetz (CIDR)"
 [e_cidr]="Das sieht nicht wie eine gueltige CIDR-Angabe aus."
 [l_net]="Tunnelnetz"
 [cidr_warn1]="Achtung: Die Tunnelnetze werden nur beim allerersten Start eines Containers uebernommen."
@@ -63,9 +64,6 @@ M=(
 [q_uiport_l]="Lokaler Port der Weboberfläche (TCP)"
 [e_port]="Port muss eine Zahl sein."
 
-[q_v4cidr]="IPv4-Tunnelnetz (CIDR)"
-[q_v6cidr]="IPv6-Tunnelnetz (CIDR)"
-[l_net]="Tunnelnetz"
 [s3]="3. Zugangsdaten und DNS"
 [q_user]="Benutzername für die Oberfläche"
 [q_genpw]="Passwort automatisch erzeugen?"
@@ -137,6 +135,14 @@ M=(
 [u_conf]="Wirklich alles löschen? Das ist endgültig."
 [u_done1]="Container entfernt."   [u_done2]="Alles entfernt."
 [absent]="nicht vorhanden"
+[e_domain_fmt]="Das sieht nicht wie ein gueltiger DNS-Name aus."
+[e_email_fmt]="Das sieht nicht wie eine gueltige E-Mail-Adresse aus."
+[e_dns_fmt]="Bitte kommagetrennte IP-Adressen angeben (z. B. 1.1.1.1,1.0.0.1)."
+[dns_custom]="Eigener DNS-Server"
+[no_ipv6]="Der Host hat kein aktives IPv6 - der Tunnel wird ohne IPv6 eingerichtet."
+[ipv6_off]="IPv6 aus"
+[compose_fail]="Docker konnte die Images nicht laden oder den Container nicht starten."
+[docker_dl]="Docker-Installationsskript konnte nicht geladen werden."
 )
 }
 
@@ -171,8 +177,8 @@ M=(
 [q_site]="Site number (1-99) - the tunnel network is derived from it"
 [site_nets]="Results in: IPv4 %s and IPv6 %s"
 [q_customnet]="Rather define the networks yourself?"
-[q_v4cidr]="Tunnel network IPv4 (CIDR)"
-[q_v6cidr]="Tunnel network IPv6 (CIDR)"
+[q_v4cidr]="IPv4 tunnel network (CIDR)"
+[q_v6cidr]="IPv6 tunnel network (CIDR)"
 [e_cidr]="That does not look like a valid CIDR."
 [l_net]="Tunnel network"
 [cidr_warn1]="Careful: tunnel networks are only applied on the very first start of a container."
@@ -184,9 +190,6 @@ M=(
 [q_uiport_l]="Local web interface port (TCP)"
 [e_port]="Port must be a number."
 
-[q_v4cidr]="IPv4 tunnel network (CIDR)"
-[q_v6cidr]="IPv6 tunnel network (CIDR)"
-[l_net]="Tunnel network"
 [s3]="3. Credentials and DNS"
 [q_user]="Username for the interface"
 [q_genpw]="Generate a password automatically?"
@@ -258,6 +261,14 @@ M=(
 [u_conf]="Really delete everything? This cannot be undone."
 [u_done1]="Container removed."    [u_done2]="Everything removed."
 [absent]="not present"
+[e_domain_fmt]="That does not look like a valid DNS name."
+[e_email_fmt]="That does not look like a valid email address."
+[e_dns_fmt]="Please enter comma-separated IP addresses (e.g. 1.1.1.1,1.0.0.1)."
+[dns_custom]="Custom DNS server"
+[no_ipv6]="This host has no active IPv6 - setting up the tunnel without IPv6."
+[ipv6_off]="IPv6 off"
+[compose_fail]="Docker could not pull the images or start the container."
+[docker_dl]="Could not download the Docker installation script."
 )
 }
 
@@ -270,9 +281,9 @@ line() { echo "------------------------------------------------------------"; }
 ask() {
   local prompt="$1" def="${2:-}" ans
   if [[ -n "$def" ]]; then
-    read -r -p "  ${prompt} [${def}]: " ans
+    read -r -p "  ${prompt} [${def}]: " ans || true
   else
-    read -r -p "  ${prompt}: " ans
+    read -r -p "  ${prompt}: " ans || true
   fi
   echo "${ans:-$def}"
 }
@@ -280,7 +291,7 @@ ask() {
 ask_yes() {                       # ask_yes "Frage" yes|no  -> 0 = ja/yes
   local prompt="$1" def="${2:-yes}" ans hint
   [[ "$def" == "yes" ]] && hint="${M[hint_yes]}" || hint="${M[hint_no]}"
-  read -r -p "  ${prompt} ${hint}: " ans
+  read -r -p "  ${prompt} ${hint}: " ans || true
   if [[ -z "$ans" ]]; then [[ "$def" == "yes" ]]; return $?; fi
   [[ "${ans,,}" =~ ^(j|ja|y|yes)$ ]]
 }
@@ -288,8 +299,8 @@ ask_yes() {                       # ask_yes "Frage" yes|no  -> 0 = ja/yes
 ask_secret() {
   local pw1 pw2
   while true; do
-    read -r -s -p "  ${M[pw]}: " pw1; echo >&2
-    read -r -s -p "  ${M[pw_rep]}: " pw2; echo >&2
+    read -r -s -p "  ${M[pw]}: " pw1 || true; echo >&2
+    read -r -s -p "  ${M[pw_rep]}: " pw2 || true; echo >&2
     if [[ "$pw1" != "$pw2" ]]; then
       echo "  ${M[pw_diff]}" >&2
     elif [[ ${#pw1} -lt 12 ]]; then
@@ -306,7 +317,7 @@ choose() {                        # choose "Titel" "A" "B" ... -> Index (1-based
   echo "  ${title}" >&2
   for i in "${!opts[@]}"; do echo "    $((i+1))) ${opts[$i]}" >&2; done
   while true; do
-    read -r -p "  ${M[sel]} [1]: " ans
+    read -r -p "  ${M[sel]} [1]: " ans || true
     ans="${ans:-1}"
     if [[ "$ans" =~ ^[0-9]+$ ]] && (( ans >= 1 && ans <= ${#opts[@]} )); then
       echo "$ans"; return 0
@@ -316,7 +327,35 @@ choose() {                        # choose "Titel" "A" "B" ... -> Index (1-based
 }
 
 gen_pw() { ( set +o pipefail; LC_ALL=C tr -dc 'A-Za-z0-9' < /dev/urandom | head -c 24 ); }
-envget() { [[ -f "${DIR}/.env" ]] && sed -n "s/^$1=//p" "${DIR}/.env" | head -1 || true; }
+
+# Docker Compose interpoliert $ auch in .env-Werten. Daher beim Schreiben
+# $ -> $$ maskieren und beim Lesen wieder $$ -> $ (sonst zerlegt Compose z. B.
+# Passwoerter, die ein $ enthalten).
+esc_env() { local s="$1"; printf '%s' "${s//$/\$\$}"; }
+envget() {
+  [[ -f "${DIR}/.env" ]] || return 0
+  local v
+  v="$(sed -n "s/^$1=//p" "${DIR}/.env" 2>/dev/null | head -1)" || true
+  printf '%s' "${v//\$\$/\$}"
+}
+
+valid_domain() { [[ "$1" =~ ^([A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)+[A-Za-z]{2,}$ ]]; }
+valid_email()  { [[ "$1" =~ ^[^@[:space:]]+@[^@[:space:]]+\.[^@[:space:]]+$ ]]; }
+valid_dns() {
+  local list="$1" ip; [[ -n "$list" ]] || return 1
+  local -a parts; IFS=',' read -ra parts <<< "$list" || true
+  for ip in "${parts[@]}"; do
+    ip="${ip// /}"
+    [[ "$ip" =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}$ ]] && continue
+    [[ "$ip" == *:* && "$ip" =~ ^[0-9A-Fa-f:]+$ ]] && continue
+    return 1
+  done
+  return 0
+}
+ipv6_available() {
+  [[ -e /proc/sys/net/ipv6/conf/all/disable_ipv6 ]] || return 1
+  [[ "$(cat /proc/sys/net/ipv6/conf/all/disable_ipv6 2>/dev/null)" == "0" ]]
+}
 
 # ============================================================= Sprachauswahl
 pick_language() {
@@ -329,7 +368,7 @@ pick_language() {
   echo "    1) Deutsch"
   echo "    2) English"
   local d=1; [[ "$def" == "en" ]] && d=2
-  read -r -p "  Auswahl / Choice [${d}]: " ans
+  read -r -p "  Auswahl / Choice [${d}]: " ans || true
   ans="${ans:-$d}"
   case "$ans" in
     2|en|EN|english|English) UILANG="en"; lang_en ;;
@@ -362,8 +401,9 @@ cleanup_old() {
     info "${M[old_files]}"
     touched=1
   fi
-  [[ $touched -eq 1 ]] && command -v docker >/dev/null 2>&1 && \
+  if [[ $touched -eq 1 ]] && command -v docker >/dev/null 2>&1; then
     systemctl restart docker >/dev/null 2>&1 || true
+  fi
 
   # Regelwerk kann auch ohne Datei noch im Speicher aktiv sein.
   # Nur die INPUT-Kette ist hier kritisch - Dockers FORWARD-Drop ist normal und gewollt.
@@ -374,7 +414,9 @@ cleanup_old() {
     echo
     if ask_yes "${M[q_flush]}" no; then
       nft flush ruleset 2>/dev/null || true
-      command -v docker >/dev/null 2>&1 && systemctl restart docker >/dev/null 2>&1 || true
+      if command -v docker >/dev/null 2>&1; then
+        systemctl restart docker >/dev/null 2>&1 || true
+      fi
     fi
   fi
   return 0
@@ -397,7 +439,14 @@ install_docker() {
   export DEBIAN_FRONTEND=noninteractive
   apt-get update -qq
   apt-get install -y -qq curl ca-certificates >/dev/null
-  curl -fsSL https://get.docker.com | sh
+  # Skript erst laden, dann ausfuehren - so wird ein abgebrochener Download
+  # nicht halb ausgefuehrt (statt Pipe direkt in die Shell).
+  local get_docker; get_docker="$(mktemp)"
+  if ! curl -fsSL https://get.docker.com -o "$get_docker"; then
+    rm -f "$get_docker"; die "${M[docker_dl]}"
+  fi
+  sh "$get_docker"
+  rm -f "$get_docker"
   systemctl enable --now docker >/dev/null 2>&1 || true
   docker compose version >/dev/null 2>&1 || die "${M[dock_miss]}"
 }
@@ -436,7 +485,9 @@ wizard() {
     1) echo
        domain="$(ask "${M[q_domain]}" "$(envget DOMAIN)")"
        [[ -n "$domain" ]] || die "${M[e_domain]}"
-       le_email="$(ask "${M[q_email]}" "$(envget LE_EMAIL)")" ;;
+       valid_domain "$domain" || die "${M[e_domain_fmt]}"
+       le_email="$(ask "${M[q_email]}" "$(envget LE_EMAIL)")"
+       [[ -z "$le_email" ]] || valid_email "$le_email" || die "${M[e_email_fmt]}" ;;
     2) ui_bind="0.0.0.0"; echo
        warn "${M[w_http]}"
        ask_yes "${M[q_http]}" no || { echo; wizard; return; } ;;
@@ -473,6 +524,13 @@ wizard() {
     [[ "$v6cidr" =~ ^[0-9a-fA-F:]+/[0-9]{1,3}$ ]] || die "${M[e_cidr]}"
   fi
 
+  # Ohne aktives IPv6 auf dem Host wuerde der Container beim Start scheitern -
+  # dann ganz ohne IPv6 einrichten.
+  if [[ -n "$v6cidr" ]] && ! ipv6_available; then
+    warn "${M[no_ipv6]}"
+    v6cidr=""
+  fi
+
   ui_port="51821"
   if [[ -z "$domain" ]]; then
     if [[ "$ui_bind" == "0.0.0.0" ]]; then
@@ -491,7 +549,26 @@ wizard() {
   [[ -n "$admin_user" ]] || admin_user="admin"
 
   if ask_yes "${M[q_genpw]}" yes; then admin_pw="$(gen_pw)"; else admin_pw="$(ask_secret)"; fi
-  dns="$(ask "${M[q_dns]}" "1.1.1.1,1.0.0.1")"
+
+  local def_dns dns_sel
+  def_dns="$(envget INIT_DNS)"
+  dns_sel="$(choose "${M[q_dns]}" \
+    "Cloudflare (1.1.1.1, 1.0.0.1)" \
+    "Quad9 (9.9.9.9, 149.112.112.112)" \
+    "Google (8.8.8.8, 8.8.4.4)" \
+    "AdGuard (94.140.14.14, 94.140.15.15)" \
+    "${M[dns_custom]}")"
+  case "$dns_sel" in
+    1) dns="1.1.1.1,1.0.0.1" ;;
+    2) dns="9.9.9.9,149.112.112.112" ;;
+    3) dns="8.8.8.8,8.8.4.4" ;;
+    4) dns="94.140.14.14,94.140.15.15" ;;
+    5) while true; do
+         dns="$(ask "${M[q_dns]}" "${def_dns:-1.1.1.1,1.0.0.1}")"
+         valid_dns "$dns" && break
+         echo "  ${M[e_dns_fmt]}"
+       done ;;
+  esac
 
   echo; line
   echo "${B} ${M[summary]}${N}"
@@ -504,7 +581,7 @@ wizard() {
   printf "  %s: %s\n" "${M[l_client]}" "$host:$wg_port/udp"
   printf "  %s: %s\n" "${M[l_user]}" "$admin_user"
   printf "  %s: %s\n" "${M[l_dns]}" "$dns"
-  printf "  %s: %s + %s\n" "${M[l_net]}" "$v4cidr" "$v6cidr"
+  printf "  %s: %s + %s\n" "${M[l_net]}" "$v4cidr" "${v6cidr:-${M[ipv6_off]}}"
   echo
   local ports="UDP ${wg_port}"
   case "$ui_mode" in
@@ -535,6 +612,18 @@ apply() {
 
   local ui_publish="      - \"\${UI_BIND}:\${UI_PORT}:51821/tcp\""
   local insecure="true" caddy_service="" caddy_volumes=""
+
+  # IPv6-Bausteine nur einbauen, wenn ein IPv6-Tunnelnetz gesetzt ist. Auf Hosts
+  # ohne aktives IPv6 wuerde der Container sonst nicht starten.
+  local net_ipv6_enable="    enable_ipv6: true"
+  local net_ipv6_subnet="        - subnet: fdcc:ad94:bacf:61a3::/64"
+  local svc_ipv6_addr="        ipv6_address: fdcc:ad94:bacf:61a3::2a"
+  local ipv6_sysctls="      - net.ipv6.conf.all.disable_ipv6=0
+      - net.ipv6.conf.all.forwarding=1
+      - net.ipv6.conf.default.forwarding=1"
+  if [[ -z "$v6cidr" ]]; then
+    net_ipv6_enable=""; net_ipv6_subnet=""; svc_ipv6_addr=""; ipv6_sysctls=""
+  fi
 
   if [[ -n "$domain" ]]; then
     ui_publish=""
@@ -590,7 +679,7 @@ services:
     networks:
       wg:
         ipv4_address: 10.42.42.42
-        ipv6_address: fdcc:ad94:bacf:61a3::2a
+${svc_ipv6_addr}
     volumes:
       - etc_wireguard:/etc/wireguard
       - /lib/modules:/lib/modules:ro
@@ -604,38 +693,36 @@ ${ui_publish}
     sysctls:
       - net.ipv4.ip_forward=1
       - net.ipv4.conf.all.src_valid_mark=1
-      - net.ipv6.conf.all.disable_ipv6=0
-      - net.ipv6.conf.all.forwarding=1
-      - net.ipv6.conf.default.forwarding=1
+${ipv6_sysctls}
 ${caddy_service}
 
 networks:
   wg:
     driver: bridge
-    enable_ipv6: true
+${net_ipv6_enable}
     ipam:
       driver: default
       config:
         - subnet: 10.42.42.0/24
-        - subnet: fdcc:ad94:bacf:61a3::/64
+${net_ipv6_subnet}
 COMPOSE
 
   umask 077
   {
-    echo "INIT_USERNAME=${admin_user}"
-    echo "INIT_PASSWORD=${admin_pw}"
-    echo "INIT_HOST=${host}"
-    echo "INIT_PORT=${wg_port}"
-    echo "INIT_DNS=${dns}"
-    echo "INIT_IPV4_CIDR=${v4cidr}"
-    echo "INIT_IPV6_CIDR=${v6cidr}"
-    echo "SITE_NO=${site}"
-    echo "WG_PORT=${wg_port}"
-    echo "UI_PORT=${ui_port}"
-    echo "UI_BIND=${ui_bind}"
-    echo "DOMAIN=${domain}"
-    echo "LE_EMAIL=${le_email}"
-    echo "UI_LANG=${UILANG}"
+    echo "INIT_USERNAME=$(esc_env "$admin_user")"
+    echo "INIT_PASSWORD=$(esc_env "$admin_pw")"
+    echo "INIT_HOST=$(esc_env "$host")"
+    echo "INIT_PORT=$(esc_env "$wg_port")"
+    echo "INIT_DNS=$(esc_env "$dns")"
+    echo "INIT_IPV4_CIDR=$(esc_env "$v4cidr")"
+    echo "INIT_IPV6_CIDR=$(esc_env "$v6cidr")"
+    echo "SITE_NO=$(esc_env "$site")"
+    echo "WG_PORT=$(esc_env "$wg_port")"
+    echo "UI_PORT=$(esc_env "$ui_port")"
+    echo "UI_BIND=$(esc_env "$ui_bind")"
+    echo "DOMAIN=$(esc_env "$domain")"
+    echo "LE_EMAIL=$(esc_env "$le_email")"
+    echo "UI_LANG=$(esc_env "$UILANG")"
   } > "${DIR}/.env"
   chmod 600 "${DIR}/.env"
 
@@ -655,11 +742,18 @@ COMPOSE
     fi
   fi
 
-  ( cd "$DIR" && docker compose pull -q && docker compose up -d )
+  if ! ( cd "$DIR" && docker compose pull -q && docker compose up -d ); then
+    ( cd "$DIR" && docker compose logs --tail 40 ) || true
+    die "${M[compose_fail]}"
+  fi
 
-  sleep 5
-  local state
-  state="$(docker inspect -f '{{.State.Status}}' wg-easy 2>/dev/null || echo '?')"
+  # Auf langsamen Hostern braucht der erste Start etwas - bis ~30s auf 'running' warten.
+  local state="" i
+  for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do
+    state="$(docker inspect -f '{{.State.Status}}' wg-easy 2>/dev/null || echo '?')"
+    [[ "$state" == "running" ]] && break
+    sleep 2
+  done
   if [[ "$state" != "running" ]]; then
     warn "$(printf "${M[not_running]}" "$state")"
     ( cd "$DIR" && docker compose logs --tail 40 ) || true
