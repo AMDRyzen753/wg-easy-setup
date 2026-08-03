@@ -491,7 +491,7 @@ wizard() {
   [[ -n "$admin_user" ]] || admin_user="admin"
 
   if ask_yes "${M[q_genpw]}" yes; then admin_pw="$(gen_pw)"; else admin_pw="$(ask_secret)"; fi
-  dns="$(ask "${M[q_dns]}" "9.9.9.9,149.112.112.112")"
+  dns="$(ask "${M[q_dns]}" "1.1.1.1,1.0.0.1")"
 
   echo; line
   echo "${B} ${M[summary]}${N}"
