@@ -147,6 +147,11 @@ M=(
 [p_http]="HTTP - Zertifikat und Weiterleitung auf HTTPS"
 [p_https]="HTTPS - Weboberflaeche"
 [p_ui]="Weboberflaeche"
+[low_disk]="Wenig freier Speicher (%s MB). Docker und die Images brauchen deutlich mehr."
+[q_continue]="Trotzdem fortfahren?"
+[apt_fail]="apt-get ist fehlgeschlagen (Netzwerk oder Paketquellen). Bitte spaeter erneut versuchen."
+[retry_wait]="Versuch %s/%s fehlgeschlagen - neuer Versuch in %ss ..."
+[docker_retry]="Docker-Installation unterbrochen (Versuch %s) - repariere und versuche erneut ..."
 )
 }
 
@@ -277,6 +282,11 @@ M=(
 [p_http]="HTTP - certificate and redirect to HTTPS"
 [p_https]="HTTPS - web interface"
 [p_ui]="Web interface"
+[low_disk]="Low free disk space (%s MB). Docker and the images need considerably more."
+[q_continue]="Continue anyway?"
+[apt_fail]="apt-get failed (network or package sources). Please try again later."
+[retry_wait]="Attempt %s/%s failed - retrying in %ss ..."
+[docker_retry]="Docker installation interrupted (attempt %s) - repairing and retrying ..."
 )
 }
 
@@ -452,22 +462,65 @@ check_local() {                   # check_local <port> ; 0 = antwortet
   [[ "$code" =~ ^(200|301|302|303|307|308|401|403)$ ]]
 }
 
+# Bringt dpkg/apt nach einer unterbrochenen Installation wieder in Ordnung.
+apt_repair() {
+  dpkg --configure -a >/dev/null 2>&1 || true
+  apt-get -f install -y -qq >/dev/null 2>&1 || true
+}
+
+# retry <max_versuche> <start_delay_s> befehl ...
+# Wiederholt den Befehl bei Fehlern mit exponentiellem Backoff (2s, 4s, 8s ...).
+retry() {
+  local max="$1" delay="$2"; shift 2
+  local n=1
+  while true; do
+    "$@" && return 0
+    (( n >= max )) && return 1
+    warn "$(printf "${M[retry_wait]}" "$n" "$max" "$delay")"
+    sleep "$delay"; delay=$(( delay * 2 )); n=$(( n + 1 ))
+  done
+}
+
 install_docker() {
   if command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; then
     info "${M[dock_ok]}"; return 0
   fi
+
+  # Speicherplatz-Vorabpruefung - zu wenig Platz ist eine haeufige Abbruch-Ursache.
+  local avail_kb
+  avail_kb="$(df -Pk /var/lib 2>/dev/null | awk 'NR==2{print $4}')"
+  if [[ "$avail_kb" =~ ^[0-9]+$ ]] && (( avail_kb < 2097152 )); then
+    warn "$(printf "${M[low_disk]}" "$(( avail_kb / 1024 ))")"
+    ask_yes "${M[q_continue]}" no || die "${M[aborted]}"
+  fi
+
   info "${M[dock_inst]}"
   export DEBIAN_FRONTEND=noninteractive
-  apt-get update -qq
-  apt-get install -y -qq curl ca-certificates >/dev/null
-  # Skript erst laden, dann ausfuehren - so wird ein abgebrochener Download
-  # nicht halb ausgefuehrt (statt Pipe direkt in die Shell).
+
+  # Falls eine fruehere Installation unterbrochen wurde (halb-konfigurierte Pakete),
+  # den dpkg-Zustand zuerst reparieren - sonst schlaegt jede weitere Installation fehl.
+  apt_repair
+  retry 4 2 apt-get update -qq                            || die "${M[apt_fail]}"
+  retry 4 2 apt-get install -y -qq curl ca-certificates >/dev/null || die "${M[apt_fail]}"
+
+  # Docker-Installationsskript erst laden (mit Retry), dann ausfuehren - so wird ein
+  # abgebrochener Download nicht halb ausgefuehrt (statt Pipe direkt in die Shell).
   local get_docker; get_docker="$(mktemp)"
-  if ! curl -fsSL https://get.docker.com -o "$get_docker"; then
+  if ! retry 4 2 curl -fsSL https://get.docker.com -o "$get_docker"; then
     rm -f "$get_docker"; die "${M[docker_dl]}"
   fi
-  sh "$get_docker"
+
+  # Ausfuehren; bei Abbruch (z. B. Netzwerk/apt) dpkg reparieren und erneut versuchen.
+  local ok=0 try
+  for try in 1 2 3; do
+    if sh "$get_docker"; then ok=1; break; fi
+    warn "$(printf "${M[docker_retry]}" "$try")"
+    apt_repair
+    sleep $(( try * 2 ))
+  done
   rm -f "$get_docker"
+  (( ok == 1 )) || die "${M[dock_miss]}"
+
   systemctl enable --now docker >/dev/null 2>&1 || true
   docker compose version >/dev/null 2>&1 || die "${M[dock_miss]}"
 }
